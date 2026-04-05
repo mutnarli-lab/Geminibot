@@ -1,39 +1,43 @@
 import streamlit as st
-import google.generativeai as genai
+import requests
+import json
 from datetime import datetime
 
 # Sayfa Ayarları
 st.set_page_config(page_title="AI Analiz Pro", layout="wide")
 
-# --- KESİN HAFIZA KİLİDİ ---
-if "api_key" not in st.session_state:
-    st.session_state.api_key = ""
-if "maclar" not in st.session_state:
-    st.session_state.maclar = []
+# --- HAFIZA KİLİDİ ---
+if "api_key" not in st.session_state: st.session_state.api_key = ""
+if "maclar" not in st.session_state: st.session_state.maclar = []
 
-# --- MODEL BAĞLANTI (GÜNCELLENMİŞ PROTOKOL) ---
+# --- HAM API BAĞLANTISI (Kütüphane Kullanmadan) ---
 def ai_getir(prompt):
+    # Bu yöntem 'v1beta' hatasını %100 aşar çünkü doğrudan 'v1' kararlı sürümüne gider
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={st.session_state.api_key}"
+    headers = {'Content-Type': 'application/json'}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    
     try:
-        genai.configure(api_key=st.session_state.api_key)
-        # Model ismini 'latest' takısıyla çağırarak v1beta çakışmasını aşıyoruz
-        model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
-        response = model.generate_content(prompt)
-        return response.text
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        res_json = response.json()
+        
+        if response.status_code == 200:
+            return res_json['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"API Hatası ({response.status_code}): {res_json.get('error', {}).get('message', 'Bilinmeyen Hata')}"
     except Exception as e:
-        # Eğer yine hata verirse alternatif model ismini dene
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            return model.generate_content(prompt).text
-        except:
-            return f"Kritik Bağlantı Hatası: {str(e)}"
+        return f"Bağlantı Hatası: {str(e)}"
 
 # --- YAN PANEL ---
 with st.sidebar:
     st.title("🛡️ Ayarlar")
     # Hafızadaki key'i inputa bağla
-    st.session_state.api_key = st.text_input("Gemini API Key:", value=st.session_state.api_key, type="password")
-    if st.button("Anahtarı Sisteme Kilitle"):
-        st.success("Anahtar başarıyla kaydedildi!")
+    key_input = st.text_input("Gemini API Key:", value=st.session_state.api_key, type="password")
+    if st.button("Anahtarı Kaydet ve Kilitle"):
+        st.session_state.api_key = key_input
+        st.success("Anahtar başarıyla kilitlendi!")
 
 # --- ANA EKRAN ---
 st.title("⚽ Akıllı Maç Bülteni ve Analiz")
@@ -45,10 +49,10 @@ else:
     
     if st.button("📅 Maçları Listele"):
         with st.spinner("Bülten taranıyor..."):
-            prompt = f"{tarih} tarihindeki önemli futbol maçlarını 'Ev Sahibi - Deplasman' formatında, aralarına sadece virgül koyarak yaz."
+            prompt = f"{tarih} tarihindeki önemli futbol maçlarını 'Ev Sahibi - Deplasman' formatında, aralarına sadece virgül koyarak yaz. Başka hiçbir şey yazma."
             ham_veri = ai_getir(prompt)
             
-            if "Hata" not in ham_veri:
+            if "API Hatası" not in ham_veri:
                 liste = [m.strip() for m in ham_veri.split(",") if "-" in m]
                 st.session_state.maclar = liste
                 st.success(f"{len(liste)} maç bulundu!")
@@ -59,7 +63,7 @@ else:
         secilen_mac = st.selectbox("Maç Seçin:", st.session_state.maclar)
         
         if st.button("🔥 ANALİZ ET"):
-            with st.spinner("Tablolar oluşturuluyor..."):
+            with st.spinner("İstatistikler getiriliyor..."):
                 analiz_prompt = f"""
                 Bugün {tarih}, {secilen_mac} maçı oynanacak.
                 1. Bu maçın ligin kaçıncı haftası olduğunu bul.
@@ -67,4 +71,5 @@ else:
                 Sütunlar: Sezon, Karşılaşma (Ev-Dep), İY, MS, İY/MS.
                 3. 'AI Strateji' başlığıyla yorumla.
                 """
-                st.markdown(ai_getir(analiz_prompt))
+                sonuc = ai_getir(analiz_prompt)
+                st.markdown(sonuc)
